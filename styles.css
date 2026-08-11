@@ -1,0 +1,23 @@
+.gemini-reply-btn {
+  background-color: #1DA1F2;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 5px 15px;
+  margin-left: 10px;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gemini-reply-btn:hover {
+  background-color: #1a91da;
+}
+
+.gemini-reply-btn:disabled {
+  background-color: #8ecdf8;
+  cursor: not-allowed;
+}
