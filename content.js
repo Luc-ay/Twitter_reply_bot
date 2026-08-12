@@ -119,7 +119,7 @@ async function runBotLoop() {
     let targetTweetText = '';
     let targetAuthorName = '';
     let targetY = 0;
-    
+
     // Find next unprocessed tweet by checking its text AND absolute physical position
     for (let article of articles) {
       const rect = article.getBoundingClientRect();
@@ -127,19 +127,32 @@ async function runBotLoop() {
 
       // MATHEMATICAL BLOCK: If this post is physically higher on the page than our last post, ignore it.
       if (absoluteY <= lastProcessedY + 50) {
-        continue; 
+        continue;
+      }
+
+      // Skip if this article is nested inside another article (e.g. child comment or quote box)
+      if (article.parentElement && article.parentElement.closest('article')) {
+        continue;
+      }
+
+      // Skip reply comments (posts containing "Replying to @" headers beneath main posts)
+      const isReplyComment = Array.from(article.querySelectorAll('span')).some(span => 
+        span.innerText && span.innerText.trim().startsWith('Replying to @')
+      );
+      if (isReplyComment) {
+        continue;
       }
 
       const textEl = article.querySelector('[data-testid="tweetText"]');
       if (!textEl) continue; // Skip if no text
-      
+
       const text = textEl.innerText.trim();
-      
+
       // Skip if we already replied to this tweet OR if the tweet IS our own reply!
       if (!processedTweets.has(text) && !generatedReplies.has(text)) {
         targetArticle = article;
         targetTweetText = text;
-        
+
         const userEl = article.querySelector('[data-testid="User-Name"]');
         if (userEl) {
           const nameSpan = userEl.querySelector('span');
@@ -150,19 +163,18 @@ async function runBotLoop() {
         break;
       }
     }
-    
+
     if (!targetArticle) {
       // Scroll down to load more tweets
       window.scrollBy(0, 1500);
       await sleep(3000);
       continue;
     }
-    
+
     // Mark as processed immediately so we don't pick it up again
     processedTweets.add(targetTweetText);
     lastProcessedY = targetY; // Save the absolute Y coordinate
 
-    
     // Scroll tweet into view
     targetArticle.scrollIntoView({ behavior: 'smooth', block: 'center' });
     await sleep(2000);
@@ -177,56 +189,87 @@ async function runBotLoop() {
     if (!botActive) break;
 
     // Request AI reply
+    console.log('Requesting AI reply for tweet:', targetTweetText);
     const response = await new Promise(resolve => {
-       chrome.runtime.sendMessage({ action: 'generateReply', tweet: targetTweetText, authorName: targetAuthorName }, resolve);
+      chrome.runtime.sendMessage({ action: 'generateReply', tweet: targetTweetText, authorName: targetAuthorName }, resolve);
     });
 
-    if (response && response.reply) {
-       // Track our own generated reply so the bot never accidentally replies to itself
-       generatedReplies.add(response.reply.trim());
+    if (!response) {
+      console.error('No response returned from background script.');
+    } else if (response.error) {
+      console.error('Gemini API Error:', response.error);
+    } else if (response.reply) {
+      console.log('AI generated reply:', response.reply);
+      // Track our own generated reply so the bot never accidentally replies to itself
+      generatedReplies.add(response.reply.trim());
 
-       // Click Reply icon to open modal
-       const replyIcon = targetArticle.querySelector('[data-testid="reply"]');
-       if (replyIcon) {
-         replyIcon.click();
-         await sleep(2000); // Wait for modal to open
-         
-         if (!botActive) break;
-         
-         const inputBox = document.querySelector('[data-testid="tweetTextarea_0"]');
-         const replyButton = document.querySelector('[data-testid="tweetButton"]');
-         
-         if (inputBox && replyButton) {
-           inputBox.focus();
-           document.execCommand('insertText', false, response.reply);
-           await sleep(1500);
-           
-           if (!botActive) break;
-           
-           // Post the reply
-           replyButton.click();
-           await sleep(3000); // Wait for post to send
-           
-           sessionReplyCount++;
-           if (sessionReplyCount >= sessionReplyLimit) {
-             console.log(`Auto Bot reached the limit of ${sessionReplyLimit} comments. Stopping automatically.`);
-             botActive = false;
-             break;
-           }
-         } else {
-           // Close modal if something went wrong
-           const closeBtn = document.querySelector('[aria-label="Close"]');
-           if (closeBtn) closeBtn.click();
-         }
-       }
+      // Click Reply icon to open modal (supports fallback selectors and button element lookup)
+      let replyIcon = targetArticle.querySelector('[data-testid="reply"]') ||
+                       targetArticle.querySelector('button[aria-label*="Reply"]') ||
+                       targetArticle.querySelector('[aria-label*="reply"]');
+
+      if (replyIcon) {
+        const clickableBtn = replyIcon.closest('button') || replyIcon;
+        clickableBtn.click();
+        await sleep(2000); // Wait for modal to open
+
+        if (!botActive) break;
+
+        const inputBox = document.querySelector('[data-testid="tweetTextarea_0"]');
+        const replyButton = document.querySelector('[data-testid="tweetButton"]') ||
+                            document.querySelector('[data-testid="tweetButtonInline"]');
+
+        if (inputBox && replyButton) {
+          inputBox.focus();
+          document.execCommand('insertText', false, response.reply);
+          await sleep(1500);
+
+          if (!botActive) break;
+
+          // Post the reply
+          replyButton.click();
+
+          // Actively wait for the reply modal to close to confirm posting success
+          let sentSuccessfully = false;
+          for (let attempt = 0; attempt < 10; attempt++) { // Poll for up to 5 seconds (10 x 500ms)
+            await sleep(500);
+            const modal = document.querySelector('[aria-labelledby="modal-header"]') || document.querySelector('[data-testid="tweetTextarea_0"]');
+            if (!modal) {
+              sentSuccessfully = true;
+              break;
+            }
+          }
+
+          if (sentSuccessfully) {
+            sessionReplyCount++;
+            console.log(`Reply posted successfully! (${sessionReplyCount}/${sessionReplyLimit})`);
+            if (sessionReplyCount >= sessionReplyLimit) {
+              console.log(`Auto Bot reached the limit of ${sessionReplyLimit} comments. Stopping automatically.`);
+              botActive = false;
+              break;
+            }
+          } else {
+            console.warn('Reply modal did not close automatically. Closing modal to prevent blocking screen...');
+            const closeBtn = document.querySelector('[aria-label="Close"]') || document.querySelector('[data-testid="app-bar-close"]');
+            if (closeBtn) closeBtn.click();
+            await sleep(1000);
+          }
+        } else {
+          console.warn('Could not find inputBox or replyButton in modal.');
+          const closeBtn = document.querySelector('[aria-label="Close"]') || document.querySelector('[data-testid="app-bar-close"]');
+          if (closeBtn) closeBtn.click();
+        }
+      } else {
+        console.warn('Could not find reply button on target tweet article.');
+      }
     }
-    
+
     if (!botActive) break;
 
-    // Wait 7 seconds before next post
-    const waitTime = 7000;
-    console.log(`Bot sleeping for 7 seconds... (${sessionReplyCount}/${sessionReplyLimit} completed)`);
-    
+    // Wait 5 seconds before next post
+    const waitTime = 5000;
+    console.log(`Bot sleeping for 5 seconds... (${sessionReplyCount}/${sessionReplyLimit} completed)`);
+
     // Check botActive periodically during sleep so it stops instantly if disabled
     for (let i = 0; i < waitTime; i += 1000) {
       if (!botActive) break;
