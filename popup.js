@@ -3,11 +3,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveBtn = document.getElementById('saveBtn');
   const statusDiv = document.getElementById('status');
   const replyCountSpan = document.getElementById('replyCount');
+  const botLimitInput = document.getElementById('botLimit');
+  const toggleBotBtn = document.getElementById('toggleBotBtn');
+  const botStatusDiv = document.getElementById('botStatus');
 
-  // Load existing API key and stats
-  chrome.storage.local.get(['geminiApiKey', 'usageCount', 'usageDate'], (result) => {
+  // Load existing API key, saved limit, and stats
+  chrome.storage.local.get(['geminiApiKey', 'usageCount', 'usageDate', 'botLimit'], (result) => {
     if (result.geminiApiKey) {
       apiKeyInput.value = result.geminiApiKey;
+    }
+    if (result.botLimit) {
+      botLimitInput.value = result.botLimit;
     }
     
     const today = new Date().toISOString().split('T')[0];
@@ -18,14 +24,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  const toggleBotBtn = document.getElementById('toggleBotBtn');
-  const botStatusDiv = document.getElementById('botStatus');
+  // Save botLimit when user changes input value
+  botLimitInput.addEventListener('change', () => {
+    const val = parseInt(botLimitInput.value) || 10;
+    chrome.storage.local.set({ botLimit: val });
+  });
 
-  function updateBotUI(isActive) {
+  function updateBotUI(isActive, sessionCount, sessionLimit) {
     if (isActive) {
       toggleBotBtn.textContent = 'Stop Auto Bot';
       toggleBotBtn.style.backgroundColor = '#f4212e';
-      botStatusDiv.textContent = 'Bot is currently running...';
+      if (sessionCount !== undefined && sessionLimit !== undefined) {
+        botStatusDiv.textContent = `Bot running... (${sessionCount}/${sessionLimit})`;
+      } else {
+        botStatusDiv.textContent = 'Bot is currently running...';
+      }
     } else {
       toggleBotBtn.textContent = 'Start Auto Bot';
       toggleBotBtn.style.backgroundColor = '#1DA1F2';
@@ -38,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tabs[0]) {
       chrome.tabs.sendMessage(tabs[0].id, {action: 'getBotStatus'}, (response) => {
         if (!chrome.runtime.lastError && response) {
-          updateBotUI(response.isActive);
+          updateBotUI(response.isActive, response.sessionCount, response.sessionLimit);
         }
       });
     }
@@ -46,7 +59,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Toggle Bot
   toggleBotBtn.addEventListener('click', () => {
-    const limit = parseInt(document.getElementById('botLimit').value) || 10;
+    const limit = parseInt(botLimitInput.value) || 10;
+    chrome.storage.local.set({ botLimit: limit });
     
     chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
       if (tabs[0]) {
@@ -54,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (chrome.runtime.lastError) {
             alert('Could not connect to the page. Please refresh your X (Twitter) tab and try again!');
           } else if (response) {
-            updateBotUI(response.isActive);
+            updateBotUI(response.isActive, response.sessionCount, response.sessionLimit);
           }
         });
       }

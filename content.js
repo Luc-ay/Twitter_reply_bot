@@ -93,7 +93,7 @@ let lastProcessedY = 0; // Tracks the physical Y coordinate to prevent scrolling
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getBotStatus') {
-    sendResponse({ isActive: botActive });
+    sendResponse({ isActive: botActive, sessionCount: sessionReplyCount, sessionLimit: sessionReplyLimit });
   } else if (request.action === 'toggleBot') {
     botActive = !botActive;
     if (botActive) {
@@ -104,7 +104,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       lastProcessedY = window.scrollY; // Start from current scroll position
       runBotLoop();
     }
-    sendResponse({ isActive: botActive });
+    sendResponse({ isActive: botActive, sessionCount: sessionReplyCount, sessionLimit: sessionReplyLimit });
   }
 });
 
