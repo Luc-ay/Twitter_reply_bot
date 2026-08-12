@@ -196,6 +196,14 @@ async function runBotLoop() {
 
     if (!response) {
       console.error('No response returned from background script.');
+    } else if (response.rateLimit) {
+      console.warn(`⚠️ Rate Limit Exceeded: ${response.error}`);
+      console.log('Bot pausing for 60 seconds to reset Gemini API free tier quota...');
+      for (let i = 0; i < 60; i++) {
+        if (!botActive) break;
+        await sleep(1000);
+      }
+      continue;
     } else if (response.error) {
       console.error('Gemini API Error:', response.error);
     } else if (response.reply) {
