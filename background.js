@@ -31,29 +31,54 @@ RULES & FORMATTING:
 - NO CHEAP TITLES: Avoid words like "bro", "boss", "dude", "sir", "ma", "fam". Terms like "guys" are allowed.
 - Output ONLY the final brief reply text.`;
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: prompt
-              }]
-            }],
-            generationConfig: {
-              temperature: 0.85,
-              topK: 40,
-              maxOutputTokens: 60
+        const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-1.5-flash', 'gemini-2.0-flash'];
+        let data = null;
+        let lastErrorMsg = '';
+
+        for (const model of modelsToTry) {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{
+                  text: prompt
+                }]
+              }],
+              generationConfig: {
+                temperature: 0.85,
+                topK: 40,
+                maxOutputTokens: 60
+              }
+            })
+          });
+
+          const resJson = await response.json();
+          if (resJson.error) {
+            lastErrorMsg = resJson.error.message || JSON.stringify(resJson.error);
+            const isQuotaOrNotFound = resJson.error.code === 404 || 
+                                     resJson.error.code === 429 || 
+                                     lastErrorMsg.toLowerCase().includes('quota') || 
+                                     lastErrorMsg.toLowerCase().includes('rate limit') || 
+                                     lastErrorMsg.toLowerCase().includes('not found') ||
+                                     lastErrorMsg.toLowerCase().includes('exceeded');
+            if (isQuotaOrNotFound) {
+              console.warn(`Model ${model} unavailable/quota hit: ${lastErrorMsg}. Trying next model...`);
+              continue;
+            } else {
+              sendResponse({ error: lastErrorMsg });
+              return;
             }
-          })
-        });
+          }
 
-        const data = await response.json();
+          data = resJson;
+          break;
+        }
 
-        if (data.error) {
-          sendResponse({ error: data.error.message });
+        if (!data) {
+          sendResponse({ rateLimit: true, error: lastErrorMsg || 'All Gemini API models reached free tier quota. Retrying in 60s...' });
           return;
         }
 
